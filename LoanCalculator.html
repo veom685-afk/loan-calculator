@@ -1,0 +1,161 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Loan Repayment Calculator with Penalty</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; }
+        form { display: grid; gap: 10px; }
+        label { font-weight: bold; }
+        input { padding: 5px; }
+        button { padding: 10px; background-color: #4CAF50; color: white; border: none; cursor: pointer; }
+        #result { margin-top: 20px; border: 1px solid #ddd; padding: 10px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: right; }
+        th { background-color: #f2f2f2; }
+    </style>
+</head>
+<body>
+    <h1>Loan Repayment Calculator</h1>
+    <p>Enter loan details to calculate EMI and simulate repayments with optional missed payments and penalties.</p>
+    
+    <form id="loanForm">
+        <label for="principal">Principal Amount ($):</label>
+        <input type="number" id="principal" value="10000" required>
+        
+        <label for="annualRate">Annual Interest Rate (%):</label>
+        <input type="number" id="annualRate" value="4" step="0.1" required>
+        
+        <label for="tenure">Tenure (Months):</label>
+        <input type="number" id="tenure" value="36" required>
+        
+        <label for="penaltyRate">Penalty Rate for Missed EMI (% of EMI):</label>
+        <input type="number" id="penaltyRate" value="2" step="0.1" required>
+        
+        <label for="missedMonths">Missed Months (comma-separated, e.g., 2,5):</label>
+        <input type="text" id="missedMonths" placeholder="Leave blank if none">
+        
+        <button type="button" onclick="calculateLoan()">Calculate</button>
+    </form>
+    
+    <div id="result"></div>
+    
+    <script>
+        function calculateEMI(principal, monthlyRate, tenure) {
+            if (monthlyRate === 0) return principal / tenure;
+            const power = Math.pow(1 + monthlyRate, tenure);
+            return principal * (monthlyRate * power) / (power - 1);
+        }
+
+        function calculateLoan() {
+            const principal = parseFloat(document.getElementById('principal').value);
+            const annualRate = parseFloat(document.getElementById('annualRate').value) / 100;
+            const tenure = parseInt(document.getElementById('tenure').value);
+            const penaltyRate = parseFloat(document.getElementById('penaltyRate').value) / 100;
+            const missedMonthsInput = document.getElementById('missedMonths').value.trim();
+            const missedMonths = missedMonthsInput ? missedMonthsInput.split(',').map(m => parseInt(m.trim())) : [];
+
+            const monthlyRate = annualRate / 12;
+            const emi = calculateEMI(principal, monthlyRate, tenure);
+
+            let balance = principal;
+            let totalInterest = 0;
+            let totalPenalty = 0;
+            let totalPaid = 0;
+            let schedule = '<table><tr><th>Month</th><th>EMI</th><th>Interest</th><th>Principal Repaid</th><th>Penalty</th><th>Balance</th></tr>';
+
+            for (let month = 1; month <= tenure; month++) {
+                const interest = balance * monthlyRate;
+                let penalty = 0;
+                let principalRepaid = 0;
+                let emiPaid = 0;
+
+                if (missedMonths.includes(month)) {
+                    penalty = emi * penaltyRate;
+                    balance += interest + penalty;
+                    schedule += `<tr><td>${month}</td><td>Missed</td><td>${interest.toFixed(2)}</td><td>0</td><td>${penalty.toFixed(2)}</td><td>${balance.toFixed(2)}</td></tr>`;
+                    totalPenalty += penalty;
+                } else {
+                    principalRepaid = emi - interest;
+                    if (principalRepaid > balance) principalRepaid = balance;
+                    balance -= principalRepaid;
+                    emiPaid = interest + principalRepaid;
+                    totalPaid += emiPaid;
+                    totalInterest += interest;
+                    schedule += `<tr><td>${month}</td><td>${emiPaid.toFixed(2)}</td><td>${interest.toFixed(2)}</td><td>${principalRepaid.toFixed(2)}</td><td>0</td><td>${balance.toFixed(2)}</td></tr>`;
+                }
+
+                if (balance <= 0) break;
+            }
+
+            // If balance remains after tenure due to misses, add extra payments
+            let extraMonth = tenure + 1;
+            while (balance > 0) {
+                const interest = balance * monthlyRate;
+                let principalRepaid = emi - interest;
+                if (principalRepaid > balance) principalRepaid = balance;
+                balance -= principalRepaid;
+                const emiPaid = interest + principalRepaid;
+                totalPaid += emiPaid;
+                totalInterest += interest;
+                schedule += `<tr><td>${extraMonth} (Extra)</td><td>${emiPaid.toFixed(2)}</td><td>${interest.toFixed(2)}</td><td>${principalRepaid.toFixed(2)}</td><td>0</td><td>${balance.toFixed(2)}</td></tr>`;
+                extraMonth++;
+            }
+
+            schedule += '</table>';
+
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = `
+                <h2>Results</h2>
+                <p><strong>Monthly EMI:</strong> $${emi.toFixed(2)}</p>
+                <p><strong>Total Interest Paid:</strong> $${totalInterest.toFixed(2)}</p>
+                <p><strong>Total Penalty Paid:</strong> $${totalPenalty.toFixed(2)}</p>
+                <p><strong>Total Amount Paid:</strong> $${totalPaid.toFixed(2)}</p>
+                <p><strong>Effective Tenure:</strong> ${extraMonth - 1} months</p>
+                <h3>Amortization Schedule</h3>
+                ${schedule}
+            `;
+        }
+    </script>
+</body>
+</html>
